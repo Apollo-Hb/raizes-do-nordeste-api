@@ -1,0 +1,336 @@
+// Modelo de dados - Rede "Raizes do Nordeste"
+// O DER em docs/diagramas/der.* espelha exatamente este arquivo.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Perfil {
+  CLIENTE
+  ATENDENTE
+  COZINHA
+  GERENTE
+  ADMIN
+}
+
+enum TipoCozinha {
+  COMPLETA
+  REDUZIDA
+}
+
+enum CanalPedido {
+  APP
+  TOTEM
+  BALCAO
+  PICKUP
+  WEB
+}
+
+enum StatusPedido {
+  AGUARDANDO_PAGAMENTO
+  PAGAMENTO_RECUSADO
+  PAGO
+  EM_PREPARO
+  PRONTO
+  ENTREGUE
+  CANCELADO
+}
+
+enum StatusPagamento {
+  APROVADO
+  RECUSADO
+  ERRO
+  ESTORNADO
+}
+
+enum MetodoPagamento {
+  PIX
+  CARTAO_CREDITO
+  CARTAO_DEBITO
+  MOCK
+}
+
+enum TipoMovimentacao {
+  ENTRADA
+  SAIDA
+  RESERVA_PEDIDO
+  ESTORNO_PEDIDO
+}
+
+enum TipoTransacaoFidelidade {
+  ACUMULO
+  RESGATE
+  ESTORNO
+}
+
+enum FinalidadeConsentimento {
+  FIDELIDADE
+  MARKETING
+}
+
+model Unidade {
+  id          Int         @id @default(autoincrement())
+  nome        String
+  cidade      String
+  uf          String
+  tipoCozinha TipoCozinha @default(COMPLETA)
+  ativa       Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  funcionarios  Usuario[]
+  estoques      Estoque[]
+  pedidos       Pedido[]
+  movimentacoes MovimentacaoEstoque[]
+  promocoes     Promocao[]
+
+  @@map("unidades")
+}
+
+model Usuario {
+  id            Int       @id @default(autoincrement())
+  nome          String
+  email         String    @unique
+  senhaHash     String
+  perfil        Perfil    @default(CLIENTE)
+  // Funcionarios (ATENDENTE, COZINHA, GERENTE) pertencem a uma unidade.
+  unidadeId     Int?
+  ativo         Boolean   @default(true)
+  anonimizadoEm DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  unidade         Unidade?                @relation(fields: [unidadeId], references: [id])
+  pedidos         Pedido[]                @relation("PedidoCliente")
+  pedidosAtendidos Pedido[]               @relation("PedidoAtendente")
+  consentimentos  Consentimento[]
+  transacoesFidelidade TransacaoFidelidade[]
+  movimentacoes   MovimentacaoEstoque[]
+  auditorias      AuditLog[]
+
+  @@map("usuarios")
+}
+
+// Historico de consentimentos (LGPD art. 8): nunca e sobrescrito, so acrescido.
+model Consentimento {
+  id          Int                     @id @default(autoincrement())
+  usuarioId   Int
+  finalidade  FinalidadeConsentimento
+  concedido   Boolean
+  versaoTermo String
+  createdAt   DateTime                @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId, finalidade])
+  @@map("consentimentos")
+}
+
+model Produto {
+  id                    Int      @id @default(autoincrement())
+  nome                  String
+  descricao             String?
+  categoria             String
+  preco                 Decimal
+  // Itens que so podem ser vendidos em unidades com cozinha completa.
+  exigeCozinhaCompleta  Boolean  @default(false)
+  // Produtos sazonais (ex.: periodo junino) so aparecem dentro da janela.
+  sazonal               Boolean  @default(false)
+  disponivelDe          DateTime?
+  disponivelAte         DateTime?
+  ativo                 Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  estoques      Estoque[]
+  itensPedido   ItemPedido[]
+  movimentacoes MovimentacaoEstoque[]
+
+  @@map("produtos")
+}
+
+// Cada unidade possui estoque proprio: o par (unidade, produto) e unico.
+// A existencia do registro define que o produto faz parte do cardapio da unidade.
+model Estoque {
+  id         Int      @id @default(autoincrement())
+  unidadeId  Int
+  produtoId  Int
+  quantidade Int      @default(0)
+  // Preco local opcional (variacao regional); se nulo vale o preco do produto.
+  precoLocal Decimal?
+  updatedAt  DateTime @updatedAt
+
+  unidade Unidade @relation(fields: [unidadeId], references: [id])
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@unique([unidadeId, produtoId])
+  @@map("estoques")
+}
+
+model MovimentacaoEstoque {
+  id         Int              @id @default(autoincrement())
+  unidadeId  Int
+  produtoId  Int
+  tipo       TipoMovimentacao
+  quantidade Int
+  saldoApos  Int
+  motivo     String?
+  pedidoId   Int?
+  usuarioId  Int?
+  createdAt  DateTime         @default(now())
+
+  unidade Unidade  @relation(fields: [unidadeId], references: [id])
+  produto Produto  @relation(fields: [produtoId], references: [id])
+  pedido  Pedido?  @relation(fields: [pedidoId], references: [id])
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([unidadeId, produtoId])
+  @@map("movimentacoes_estoque")
+}
+
+model Promocao {
+  id                 Int      @id @default(autoincrement())
+  codigo             String   @unique
+  descricao          String
+  percentualDesconto Int
+  // Nulo = campanha valida para toda a rede.
+  unidadeId          Int?
+  canalPedido        CanalPedido?
+  inicio             DateTime
+  fim                DateTime
+  ativa              Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  unidade Unidade? @relation(fields: [unidadeId], references: [id])
+  pedidos Pedido[]
+
+  @@map("promocoes")
+}
+
+model Pedido {
+  id              Int             @id @default(autoincrement())
+  clienteId       Int?
+  atendenteId     Int?
+  unidadeId       Int
+  canalPedido     CanalPedido
+  status          StatusPedido    @default(AGUARDANDO_PAGAMENTO)
+  formaPagamento  MetodoPagamento
+  subtotal        Decimal
+  descontoPromocao Decimal        @default(0)
+  descontoPontos  Decimal         @default(0)
+  pontosResgatados Int            @default(0)
+  total           Decimal
+  promocaoId      Int?
+  observacao      String?
+  motivoCancelamento String?
+  // Chave enviada pelo cliente no header Idempotency-Key (evita pedido duplicado).
+  idempotencyKey  String?         @unique
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  cliente    Usuario?   @relation("PedidoCliente", fields: [clienteId], references: [id])
+  atendente  Usuario?   @relation("PedidoAtendente", fields: [atendenteId], references: [id])
+  unidade    Unidade    @relation(fields: [unidadeId], references: [id])
+  promocao   Promocao?  @relation(fields: [promocaoId], references: [id])
+  itens      ItemPedido[]
+  pagamentos Pagamento[]
+  historico  HistoricoStatusPedido[]
+  movimentacoes MovimentacaoEstoque[]
+  transacoesFidelidade TransacaoFidelidade[]
+
+  @@index([canalPedido])
+  @@index([status])
+  @@index([unidadeId, createdAt])
+  @@map("pedidos")
+}
+
+model ItemPedido {
+  id            Int     @id @default(autoincrement())
+  pedidoId      Int
+  produtoId     Int
+  quantidade    Int
+  precoUnitario Decimal
+  subtotal      Decimal
+
+  pedido  Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@map("itens_pedido")
+}
+
+model HistoricoStatusPedido {
+  id          Int           @id @default(autoincrement())
+  pedidoId    Int
+  statusDe    StatusPedido?
+  statusPara  StatusPedido
+  usuarioId   Int?
+  observacao  String?
+  createdAt   DateTime      @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+  @@map("historico_status_pedido")
+}
+
+// Pagamento desacoplado: o pedido nao conhece o gateway; cada tentativa gera um registro.
+model Pagamento {
+  id                 Int             @id @default(autoincrement())
+  pedidoId           Int
+  status             StatusPagamento
+  metodo             MetodoPagamento
+  valor              Decimal
+  tentativa          Int
+  transacaoExternaId String?
+  codigoRetorno      String?
+  mensagemRetorno    String?
+  payloadResposta    String?
+  idempotencyKey     String?         @unique
+  createdAt          DateTime        @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("pagamentos")
+}
+
+// Extrato (ledger) de pontos: o saldo e a soma das transacoes.
+model TransacaoFidelidade {
+  id        Int                     @id @default(autoincrement())
+  usuarioId Int
+  pedidoId  Int?
+  tipo      TipoTransacaoFidelidade
+  pontos    Int
+  descricao String
+  createdAt DateTime                @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+  pedido  Pedido? @relation(fields: [pedidoId], references: [id])
+
+  @@index([usuarioId])
+  @@map("transacoes_fidelidade")
+}
+
+// Trilha de auditoria de acoes sensiveis (append-only).
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  usuarioId  Int?
+  perfil     String?
+  acao       String
+  entidade   String
+  entidadeId String?
+  detalhes   String?
+  ip         String?
+  requestId  String?
+  createdAt  DateTime @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([acao])
+  @@index([entidade, entidadeId])
+  @@map("audit_logs")
+}
