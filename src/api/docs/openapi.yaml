@@ -1,3 +1,1089 @@
 openapi: 3.0.3
-info: {title: x, version: "1"}
-paths: {}
+info:
+  title: Raizes do Nordeste API
+  version: 1.0.0
+  description: |
+    API Back-end da rede de lanchonetes **Raizes do Nordeste** (matriz + unidades), atendendo
+    os canais **APP, TOTEM, BALCAO, PICKUP e WEB**.
+
+    **Fluxo critico (Fluxo A):** `POST /pedidos` -> `POST /pagamentos` (gateway mock) -> `PATCH /pedidos/{id}/status`.
+
+    **Autenticacao:** faca `POST /auth/login` e clique em *Authorize* informando o `accessToken`.
+    Usuarios de teste (seed), todos com senha `Senha@123`:
+    `admin@raizes.com` (ADMIN), `gerente.recife@raizes.com` (GERENTE, unidade 1),
+    `atendente.recife@raizes.com` (ATENDENTE, unidade 1), `cozinha.recife@raizes.com` (COZINHA, unidade 1),
+    `gerente.sp@raizes.com` (GERENTE, unidade 2), `maria@cliente.com` e `joao@cliente.com` (CLIENTE).
+
+    **Pagamento mock:** envie `tokenPagamento` = `tok_aprovado` (padrao), `tok_recusado`, `tok_cartao_bloq`,
+    `tok_instavel` (falha 1x e aprova no retry) ou `tok_indisponivel` (503).
+
+    **Padrao de erro:** todas as falhas retornam o schema `Erro`
+    (`error`, `message`, `details[]`, `timestamp`, `path`, `requestId`).
+  contact:
+    name: Apollo Hoinatz Bardini - RU 5586086
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:3000
+    description: Ambiente local
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Login e emissao de token JWT
+  - name: Usuarios
+    description: Cadastro, perfil e direitos do titular (LGPD)
+  - name: Unidades
+    description: Unidades da rede e cardapio por unidade
+  - name: Produtos
+    description: Catalogo central de produtos
+  - name: Promocoes
+    description: Campanhas e cupons de desconto
+  - name: Estoque
+    description: Estoque proprio de cada unidade
+  - name: Pedidos
+    description: Fluxo critico de pedidos multicanal
+  - name: Pagamentos
+    description: Integracao com gateway externo (mock)
+  - name: Fidelidade
+    description: Programa de pontos (com consentimento)
+  - name: Matriz
+    description: Auditoria e relatorios consolidados
+  - name: Infra
+    description: Saude da aplicacao
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'Chave unica (8-64 caracteres, ex. UUID). Reenvios com a mesma chave devolvem o recurso original com status 200 e header `Idempotent-Replayed: true`.'
+      schema: { type: string, example: 3f0c2a9e-7d1b-4c61-9a52-2c8e1f7b6d10 }
+
+  schemas:
+    Erro:
+      type: object
+      required: [error, message, details, timestamp, path]
+      properties:
+        error: { type: string, example: ESTOQUE_INSUFICIENTE }
+        message: { type: string, example: Nao ha quantidade suficiente para um ou mais itens. }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, example: 'itens[0].quantidade' }
+              issue: { type: string, example: 'Disponivel: 3' }
+        timestamp: { type: string, format: date-time }
+        path: { type: string, example: /pedidos }
+        requestId: { type: string, format: uuid }
+    Meta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        total: { type: integer, example: 42 }
+        totalPages: { type: integer, example: 5 }
+    CanalPedido:
+      type: string
+      enum: [APP, TOTEM, BALCAO, PICKUP, WEB]
+    StatusPedido:
+      type: string
+      enum: [AGUARDANDO_PAGAMENTO, PAGAMENTO_RECUSADO, PAGO, EM_PREPARO, PRONTO, ENTREGUE, CANCELADO]
+    MetodoPagamento:
+      type: string
+      enum: [PIX, CARTAO_CREDITO, CARTAO_DEBITO, MOCK]
+    Perfil:
+      type: string
+      enum: [CLIENTE, ATENDENTE, COZINHA, GERENTE, ADMIN]
+
+    LoginRequest:
+      type: object
+      required: [email, senha]
+      properties:
+        email: { type: string, format: email, example: maria@cliente.com }
+        senha: { type: string, example: Senha@123 }
+    LoginResponse:
+      type: object
+      properties:
+        accessToken: { type: string, example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... }
+        tokenType: { type: string, example: Bearer }
+        expiresIn: { type: integer, example: 3600 }
+        user:
+          type: object
+          properties:
+            id: { type: integer, example: 6 }
+            nome: { type: string, example: Maria Cliente }
+            perfil: { $ref: '#/components/schemas/Perfil' }
+            unidadeId: { type: integer, nullable: true, example: null }
+
+    CadastroUsuario:
+      type: object
+      required: [nome, email, senha]
+      properties:
+        nome: { type: string, example: Ana Souza }
+        email: { type: string, format: email, example: ana@exemplo.com }
+        senha: { type: string, minLength: 8, description: 'Minimo 8 caracteres, com letra e numero.', example: Senha@123 }
+        perfil: { $ref: '#/components/schemas/Perfil' }
+        unidadeId: { type: integer, description: 'Obrigatorio para ATENDENTE, COZINHA e GERENTE.' }
+        consentimentoFidelidade: { type: boolean, default: false, description: Consentimento explicito para o programa de fidelidade (LGPD). }
+    Consentimentos:
+      type: object
+      properties:
+        FIDELIDADE:
+          type: object
+          properties:
+            concedido: { type: boolean, example: true }
+            versaoTermo: { type: string, example: v1.0-2026 }
+            em: { type: string, format: date-time }
+        MARKETING:
+          type: object
+          properties:
+            concedido: { type: boolean, example: false }
+    Usuario:
+      type: object
+      description: Nunca inclui senha/senhaHash.
+      properties:
+        id: { type: integer, example: 8 }
+        nome: { type: string, example: Ana Souza }
+        email: { type: string, example: ana@exemplo.com }
+        perfil: { $ref: '#/components/schemas/Perfil' }
+        unidadeId: { type: integer, nullable: true }
+        ativo: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        consentimentos: { $ref: '#/components/schemas/Consentimentos' }
+
+    Unidade:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        nome: { type: string, example: Raizes do Nordeste - Recife Boa Viagem }
+        cidade: { type: string, example: Recife }
+        uf: { type: string, example: PE }
+        tipoCozinha: { type: string, enum: [COMPLETA, REDUZIDA] }
+        ativa: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    Cardapio:
+      type: object
+      properties:
+        unidade:
+          type: object
+          properties:
+            id: { type: integer, example: 2 }
+            nome: { type: string }
+            tipoCozinha: { type: string, example: REDUZIDA }
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              produtoId: { type: integer, example: 1 }
+              nome: { type: string, example: Tapioca de Carne de Sol com Queijo Coalho }
+              categoria: { type: string, example: TAPIOCA }
+              preco: { type: number, example: 27.9, description: Preco local da unidade (ou preco base) }
+              disponivel: { type: boolean, example: true }
+              motivoIndisponibilidade: { type: string, example: Produto sazonal fora do periodo de venda. }
+    Produto:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        nome: { type: string, example: Tapioca de Carne de Sol com Queijo Coalho }
+        descricao: { type: string, nullable: true }
+        categoria: { type: string, example: TAPIOCA }
+        preco: { type: number, example: 24.9 }
+        exigeCozinhaCompleta: { type: boolean }
+        sazonal: { type: boolean }
+        disponivelDe: { type: string, format: date-time, nullable: true }
+        disponivelAte: { type: string, format: date-time, nullable: true }
+        ativo: { type: boolean }
+    ProdutoInput:
+      type: object
+      required: [nome, categoria, preco]
+      properties:
+        nome: { type: string, example: Baiao de Dois }
+        descricao: { type: string, example: 'Arroz, feijao verde e queijo coalho' }
+        categoria: { type: string, example: PRATO }
+        preco: { type: number, example: 29.9 }
+        exigeCozinhaCompleta: { type: boolean, example: true }
+        sazonal: { type: boolean, example: false }
+        disponivelDe: { type: string, format: date-time }
+        disponivelAte: { type: string, format: date-time }
+    ProdutoUpdate:
+      type: object
+      description: Atualizacao parcial - informe ao menos um campo.
+      properties:
+        nome: { type: string }
+        descricao: { type: string }
+        categoria: { type: string }
+        preco: { type: number, example: 26.9 }
+        exigeCozinhaCompleta: { type: boolean }
+        sazonal: { type: boolean }
+        disponivelDe: { type: string, format: date-time }
+        disponivelAte: { type: string, format: date-time }
+    Promocao:
+      type: object
+      properties:
+        id: { type: integer }
+        codigo: { type: string, example: APP15 }
+        descricao: { type: string }
+        percentualDesconto: { type: integer, example: 15 }
+        unidadeId: { type: integer, nullable: true }
+        canalPedido: { type: string, enum: [APP, TOTEM, BALCAO, PICKUP, WEB], nullable: true }
+        inicio: { type: string, format: date-time }
+        fim: { type: string, format: date-time }
+        ativa: { type: boolean }
+    PromocaoInput:
+      type: object
+      required: [codigo, descricao, percentualDesconto, inicio, fim]
+      properties:
+        codigo: { type: string, example: JUNINO20 }
+        descricao: { type: string, example: 20% no periodo junino }
+        percentualDesconto: { type: integer, minimum: 1, maximum: 90, example: 20 }
+        unidadeId: { type: integer, example: 1 }
+        canalPedido: { $ref: '#/components/schemas/CanalPedido' }
+        inicio: { type: string, format: date-time, example: '2026-06-01T00:00:00Z' }
+        fim: { type: string, format: date-time, example: '2026-06-30T23:59:59Z' }
+
+    SaldoEstoque:
+      type: object
+      properties:
+        unidadeId: { type: integer, example: 1 }
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              produtoId: { type: integer }
+              nome: { type: string }
+              quantidade: { type: integer, example: 48 }
+              precoLocal: { type: number, nullable: true }
+              atualizadoEm: { type: string, format: date-time }
+    MovimentacaoInput:
+      type: object
+      required: [unidadeId, produtoId, tipo, quantidade]
+      properties:
+        unidadeId: { type: integer, example: 1 }
+        produtoId: { type: integer, example: 4 }
+        tipo: { type: string, enum: [ENTRADA, SAIDA] }
+        quantidade: { type: integer, minimum: 1, example: 20 }
+        motivo: { type: string, example: Reposicao semanal }
+    Movimentacao:
+      type: object
+      properties:
+        movimentacaoId: { type: integer, example: 15 }
+        unidadeId: { type: integer, example: 1 }
+        produtoId: { type: integer, example: 4 }
+        tipo: { type: string, example: ENTRADA }
+        quantidade: { type: integer, example: 20 }
+        saldoAtual: { type: integer, example: 23 }
+        motivo: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    CriarPedido:
+      type: object
+      required: [canalPedido, unidadeId, itens, formaPagamento]
+      properties:
+        canalPedido: { $ref: '#/components/schemas/CanalPedido' }
+        unidadeId: { type: integer, example: 1 }
+        clienteId: { type: integer, description: 'Usado pelo ATENDENTE (BALCAO) para identificar o cliente. Para CLIENTE e inferido do token.' }
+        itens:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [produtoId, quantidade]
+            properties:
+              produtoId: { type: integer, example: 1 }
+              quantidade: { type: integer, minimum: 1, maximum: 50, example: 2 }
+        formaPagamento: { $ref: '#/components/schemas/MetodoPagamento' }
+        codigoPromocao: { type: string, example: APP15 }
+        usarPontos: { type: integer, minimum: 0, description: 'Pontos de fidelidade a resgatar (1 ponto = R$ 0,10; max. 50% do pedido). Exige consentimento.', example: 50 }
+        observacao: { type: string, example: Sem cebola }
+      example:
+        canalPedido: APP
+        unidadeId: 1
+        itens:
+          - { produtoId: 1, quantidade: 2 }
+          - { produtoId: 3, quantidade: 1 }
+        formaPagamento: PIX
+    Pedido:
+      type: object
+      properties:
+        pedidoId: { type: integer, example: 1 }
+        canalPedido: { $ref: '#/components/schemas/CanalPedido' }
+        status: { $ref: '#/components/schemas/StatusPedido' }
+        unidadeId: { type: integer, example: 1 }
+        clienteId: { type: integer, nullable: true, example: 6 }
+        atendenteId: { type: integer, nullable: true }
+        formaPagamento: { $ref: '#/components/schemas/MetodoPagamento' }
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              produtoId: { type: integer, example: 1 }
+              nome: { type: string, example: Tapioca de Carne de Sol com Queijo Coalho }
+              quantidade: { type: integer, example: 2 }
+              precoUnitario: { type: number, example: 24.9 }
+              subtotal: { type: number, example: 49.8 }
+        subtotal: { type: number, example: 59.7 }
+        descontoPromocao: { type: number, example: 0 }
+        descontoPontos: { type: number, example: 0 }
+        pontosResgatados: { type: integer, example: 0 }
+        total: { type: number, example: 59.7 }
+        codigoPromocao: { type: string, nullable: true }
+        observacao: { type: string, nullable: true }
+        motivoCancelamento: { type: string, nullable: true }
+        historicoStatus:
+          type: array
+          items:
+            type: object
+            properties:
+              de: { type: string, nullable: true }
+              para: { type: string, example: AGUARDANDO_PAGAMENTO }
+              usuarioId: { type: integer }
+              observacao: { type: string, nullable: true }
+              em: { type: string, format: date-time }
+        pagamentos:
+          type: array
+          items: { $ref: '#/components/schemas/Pagamento' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AtualizarStatus:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/StatusPedido' }
+        observacao: { type: string }
+      example: { status: EM_PREPARO }
+
+    SolicitarPagamento:
+      type: object
+      required: [pedidoId]
+      properties:
+        pedidoId: { type: integer, example: 1 }
+        metodo: { $ref: '#/components/schemas/MetodoPagamento' }
+        tokenPagamento:
+          type: string
+          description: Token de teste do gateway mock.
+          enum: [tok_aprovado, tok_recusado, tok_cartao_bloq, tok_instavel, tok_indisponivel]
+          example: tok_aprovado
+    Pagamento:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        pedidoId: { type: integer, example: 1 }
+        status: { type: string, enum: [APROVADO, RECUSADO, ERRO, ESTORNADO] }
+        metodo: { $ref: '#/components/schemas/MetodoPagamento' }
+        valor: { type: number, example: 59.7 }
+        tentativa: { type: integer, example: 1 }
+        transacaoExternaId: { type: string, example: mock_txn_8744667b-a3e6-4dc1-a7f5-91fbfc009e20 }
+        codigoRetorno: { type: string, example: APROVADO }
+        mensagem: { type: string, example: Pagamento aprovado. }
+        respostaGateway: { type: object, description: Payload bruto devolvido pelo gateway (registrado para auditoria). }
+        createdAt: { type: string, format: date-time }
+    ResultadoPagamento:
+      type: object
+      properties:
+        pagamento: { $ref: '#/components/schemas/Pagamento' }
+        pedido:
+          type: object
+          properties:
+            pedidoId: { type: integer, example: 1 }
+            status: { $ref: '#/components/schemas/StatusPedido' }
+        pontosCreditados: { type: integer, example: 59 }
+        chamadasGateway: { type: integer, example: 1 }
+        reutilizado: { type: boolean, example: false }
+
+  responses:
+    '400':
+      description: JSON malformado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: REQUISICAO_INVALIDA, message: JSON malformado no corpo da requisicao., details: [], timestamp: '2026-11-09T12:00:00Z', path: /pedidos, requestId: 2af099bd-a786-436c-8154-7240b9f7f431 }
+    '401':
+      description: Nao autenticado (token ausente, invalido ou expirado)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: TOKEN_AUSENTE, message: 'Envie o header Authorization: Bearer <token>.', details: [], timestamp: '2026-11-09T12:00:00Z', path: /pedidos, requestId: 2af099bd-a786-436c-8154-7240b9f7f431 }
+    '403':
+      description: Perfil sem permissao
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: ACESSO_NEGADO, message: 'Requer perfil: ADMIN.', details: [], timestamp: '2026-11-09T12:00:00Z', path: /produtos, requestId: 2af099bd-a786-436c-8154-7240b9f7f431 }
+    '404':
+      description: Recurso nao encontrado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: PEDIDO_NAO_ENCONTRADO, message: Pedido nao encontrado(a)., details: [], timestamp: '2026-11-09T12:00:00Z', path: /pedidos/999, requestId: 2af099bd-a786-436c-8154-7240b9f7f431 }
+    '409':
+      description: Conflito com regra de negocio / estado atual
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+    '422':
+      description: Erro de validacao do contrato
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example:
+            error: VALIDACAO
+            message: Um ou mais campos sao invalidos.
+            details:
+              - { field: canalPedido, issue: canalPedido e obrigatorio. }
+              - { field: 'itens[0].quantidade', issue: Deve ser maior que zero. }
+            timestamp: '2026-11-09T12:00:00Z'
+            path: /pedidos
+            requestId: 2af099bd-a786-436c-8154-7240b9f7f431
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      security: []
+      tags: [Infra]
+      summary: Verifica se a API e o banco estao no ar (health check)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { status: UP, banco: UP, timestamp: '2026-11-09T12:00:00Z' }
+        '503': { description: Banco indisponivel }
+
+  /auth/login:
+    post:
+      operationId: postAuthLogin
+      security: []
+      tags: [Auth]
+      summary: Autentica o usuario e retorna um token JWT
+      description: Publico. Limitado a 20 tentativas por IP a cada 15 minutos (429). Falhas e sucessos sao auditados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Autenticado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401':
+          description: Credenciais invalidas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: CREDENCIAIS_INVALIDAS, message: E-mail ou senha invalidos., details: [], timestamp: '2026-11-09T12:00:00Z', path: /auth/login, requestId: 2af099bd-a786-436c-8154-7240b9f7f431 }
+        '422': { $ref: '#/components/responses/422' }
+        '429': { description: Muitas tentativas, content: { application/json: { schema: { $ref: '#/components/schemas/Erro' } } } }
+
+  /usuarios:
+    post:
+      operationId: postUsuarios
+      tags: [Usuarios]
+      summary: Cadastra usuario (CLIENTE publico; funcionarios apenas por ADMIN)
+      description: Sem token cria um CLIENTE. Com token ADMIN permite perfis ATENDENTE, COZINHA, GERENTE (exigem unidadeId) e ADMIN. O consentimento de fidelidade e registrado com a versao do termo.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CadastroUsuario' }
+      responses:
+        '201':
+          description: Criado
+          content: { application/json: { schema: { $ref: '#/components/schemas/Usuario' } } }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '409':
+          description: E-mail ja cadastrado
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: EMAIL_JA_CADASTRADO, message: Ja existe um usuario com este e-mail., details: [{ field: email, issue: Em uso. }], timestamp: '2026-11-09T12:00:00Z', path: /usuarios } } }
+        '422': { $ref: '#/components/responses/422' }
+    get:
+      operationId: getUsuarios
+      tags: [Usuarios]
+      summary: Lista usuarios (e-mail mascarado) - ADMIN
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: perfil, in: query, schema: { $ref: '#/components/schemas/Perfil' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Usuario' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+  /usuarios/me:
+    get:
+      operationId: getUsuariosMe
+      tags: [Usuarios]
+      summary: Dados do usuario autenticado
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Usuario' } } } }
+        '401': { $ref: '#/components/responses/401' }
+    delete:
+      operationId: deleteUsuariosMe
+      tags: [Usuarios]
+      summary: Eliminacao dos dados pessoais por anonimizacao (LGPD art. 18, VI) - CLIENTE
+      description: Substitui nome/e-mail, invalida a senha e desativa a conta. Pedidos sao mantidos (obrigacao fiscal) sem identificar o titular. O token deixa de valer imediatamente.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Anonimizado }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+  /usuarios/me/dados:
+    get:
+      operationId: getUsuariosMeDados
+      tags: [Usuarios]
+      summary: Exporta todos os dados pessoais do titular (LGPD art. 18, II e V)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Dados do titular
+          content:
+            application/json:
+              example:
+                geradoEm: '2026-11-09T12:00:00Z'
+                titular: { id: 6, nome: Maria Cliente, email: maria@cliente.com, perfil: CLIENTE }
+                consentimentos: [{ finalidade: FIDELIDADE, concedido: true, versaoTermo: v1.0-2026 }]
+                fidelidade: [{ tipo: ACUMULO, pontos: 200, descricao: Bonus de boas-vindas }]
+                pedidos: [{ pedidoId: 1, canalPedido: APP, status: ENTREGUE, total: 59.7 }]
+        '401': { $ref: '#/components/responses/401' }
+  /usuarios/me/consentimentos:
+    put:
+      operationId: putUsuariosMeConsentimentos
+      tags: [Usuarios]
+      summary: Concede ou revoga consentimento (historico imutavel) - CLIENTE
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [finalidade, concedido]
+              properties:
+                finalidade: { type: string, enum: [FIDELIDADE, MARKETING] }
+                concedido: { type: boolean }
+            example: { finalidade: FIDELIDADE, concedido: true }
+      responses:
+        '200': { description: Consentimentos atuais, content: { application/json: { schema: { $ref: '#/components/schemas/Consentimentos' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '422': { $ref: '#/components/responses/422' }
+  /usuarios/{id}:
+    get:
+      operationId: getUsuariosId
+      tags: [Usuarios]
+      summary: Consulta dados pessoais de um usuario - ADMIN (acesso auditado)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Usuario' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+
+  /unidades:
+    get:
+      operationId: getUnidades
+      security: []
+      tags: [Unidades]
+      summary: Lista unidades ativas da rede (publico)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: uf, in: query, schema: { type: string, example: PE } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Unidade' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+    post:
+      operationId: postUnidades
+      tags: [Unidades]
+      summary: Cadastra unidade - ADMIN
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, cidade, uf]
+              properties:
+                nome: { type: string, example: Raizes do Nordeste - Fortaleza Centro }
+                cidade: { type: string, example: Fortaleza }
+                uf: { type: string, example: CE }
+                tipoCozinha: { type: string, enum: [COMPLETA, REDUZIDA] }
+      responses:
+        '201': { description: Criada, content: { application/json: { schema: { $ref: '#/components/schemas/Unidade' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '422': { $ref: '#/components/responses/422' }
+  /unidades/{id}:
+    get:
+      operationId: getUnidadesId
+      security: []
+      tags: [Unidades]
+      summary: Detalha uma unidade
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Unidade' } } } }
+        '404': { $ref: '#/components/responses/404' }
+  /unidades/{id}/cardapio:
+    get:
+      operationId: getUnidadesIdCardapio
+      security: []
+      tags: [Unidades]
+      summary: Cardapio da unidade com preco local e disponibilidade (publico)
+      description: Considera estoque local, tipo de cozinha (COMPLETA/REDUZIDA) e janela de produtos sazonais.
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: disponiveis, in: query, schema: { type: string, enum: ['true', 'false'] }, description: Retorna apenas itens disponiveis }
+        - { name: categoria, in: query, schema: { type: string, example: BEBIDA } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Cardapio' } } } }
+        '404': { $ref: '#/components/responses/404' }
+
+  /produtos:
+    get:
+      operationId: getProdutos
+      security: []
+      tags: [Produtos]
+      summary: Lista produtos ativos (publico, paginado)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: categoria, in: query, schema: { type: string, example: BEBIDA } }
+        - { name: busca, in: query, schema: { type: string, example: tapioca } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Produto' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+    post:
+      operationId: postProdutos
+      tags: [Produtos]
+      summary: Cadastra produto - ADMIN
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProdutoInput' } } }
+      responses:
+        '201': { description: Criado, content: { application/json: { schema: { $ref: '#/components/schemas/Produto' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '422': { $ref: '#/components/responses/422' }
+  /produtos/{id}:
+    get:
+      operationId: getProdutosId
+      security: []
+      tags: [Produtos]
+      summary: Detalha produto
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Produto' } } } }
+        '404': { $ref: '#/components/responses/404' }
+    put:
+      operationId: putProdutosId
+      tags: [Produtos]
+      summary: Atualiza produto (parcial) - ADMIN (auditado com antes/depois)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProdutoUpdate' }, example: { preco: 26.9 } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Produto' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '422': { $ref: '#/components/responses/422' }
+    delete:
+      operationId: deleteProdutosId
+      tags: [Produtos]
+      summary: Desativa produto (exclusao logica) - ADMIN
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '204': { description: Desativado }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+
+  /promocoes:
+    get:
+      operationId: getPromocoes
+      security: []
+      tags: [Promocoes]
+      summary: Lista promocoes vigentes (publico)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Promocao' } } } } }
+    post:
+      operationId: postPromocoes
+      tags: [Promocoes]
+      summary: Cria campanha/promocao - ADMIN
+      description: 'Regra: 1 promocao por pedido; valida vigencia, unidade e canal. Aplicada antes do desconto por pontos.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PromocaoInput' } } }
+      responses:
+        '201': { description: Criada, content: { application/json: { schema: { $ref: '#/components/schemas/Promocao' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '409': { $ref: '#/components/responses/409' }
+        '422': { $ref: '#/components/responses/422' }
+
+  /estoque:
+    get:
+      operationId: getEstoque
+      tags: [Estoque]
+      summary: Saldo de estoque da unidade - equipe da unidade ou ADMIN
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: unidadeId, in: query, required: true, schema: { type: integer, example: 1 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SaldoEstoque' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '422': { $ref: '#/components/responses/422' }
+  /estoque/movimentacoes:
+    post:
+      operationId: postEstoqueMovimentacoes
+      tags: [Estoque]
+      summary: Registra entrada ou saida de estoque - GERENTE (da unidade) ou ADMIN
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MovimentacaoInput' } } }
+      responses:
+        '201': { description: Registrada, content: { application/json: { schema: { $ref: '#/components/schemas/Movimentacao' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '409':
+          description: Saida maior que o saldo
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: ESTOQUE_INSUFICIENTE, message: Saida maior que o saldo disponivel., details: [{ field: quantidade, issue: 'Disponivel: 3' }], timestamp: '2026-11-09T12:00:00Z', path: /estoque/movimentacoes } } }
+        '422': { $ref: '#/components/responses/422' }
+    get:
+      operationId: getEstoqueMovimentacoes
+      tags: [Estoque]
+      summary: Historico de movimentacoes da unidade - GERENTE ou ADMIN
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: unidadeId, in: query, required: true, schema: { type: integer, example: 1 } }
+        - { name: produtoId, in: query, schema: { type: integer } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+
+  /pedidos:
+    post:
+      operationId: postPedidos
+      tags: [Pedidos]
+      summary: Cria pedido (fluxo critico) validando canal, cardapio, estoque, promocao e pontos
+      description: |
+        Perfis: CLIENTE (canais APP, TOTEM, PICKUP, WEB), ATENDENTE (BALCAO), GERENTE/ADMIN.
+        **canalPedido e obrigatorio.** O estoque e reservado (baixa condicional atomica) e devolvido se o pedido for cancelado.
+        Ordem de calculo: subtotal -> promocao (%) -> pontos (max. 50%). Status inicial: AGUARDANDO_PAGAMENTO.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CriarPedido' } } }
+      responses:
+        '201':
+          description: Pedido criado (header Location)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } }
+        '200': { description: Reenvio idempotente - devolve o pedido original }
+        '400': { $ref: '#/components/responses/400' }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404':
+          description: Unidade, produto ou cliente inexistente
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: PRODUTO_NAO_ENCONTRADO, message: Produto nao encontrado(a)., details: [{ field: 'itens[0].produtoId', issue: Produto 9999 nao encontrado. }], timestamp: '2026-11-09T12:00:00Z', path: /pedidos } } }
+        '409':
+          description: Estoque insuficiente
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: ESTOQUE_INSUFICIENTE, message: Nao ha quantidade suficiente para um ou mais itens., details: [{ field: 'itens[0].quantidade', issue: 'Disponivel: 3' }], timestamp: '2026-11-09T12:00:00Z', path: /pedidos } } }
+        '422':
+          description: 'Validacao (VALIDACAO) ou regra de negocio: PRODUTO_INDISPONIVEL, CANAL_INVALIDO_PARA_PERFIL, PROMOCAO_INVALIDA, CONSENTIMENTO_NECESSARIO, SALDO_PONTOS_INSUFICIENTE'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' } } }
+    get:
+      operationId: getPedidos
+      tags: [Pedidos]
+      summary: Lista pedidos com filtros (canal, status, unidade, periodo) e paginacao
+      description: CLIENTE ve apenas os proprios; funcionarios veem a propria unidade; ADMIN ve toda a rede.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: canalPedido, in: query, schema: { $ref: '#/components/schemas/CanalPedido' } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/StatusPedido' } }
+        - { name: unidadeId, in: query, schema: { type: integer } }
+        - { name: dataInicio, in: query, schema: { type: string, format: date-time } }
+        - { name: dataFim, in: query, schema: { type: string, format: date-time } }
+        - { name: ordem, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Pedido' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '422': { $ref: '#/components/responses/422' }
+  /pedidos/{id}:
+    get:
+      operationId: getPedidosId
+      tags: [Pedidos]
+      summary: Detalha pedido com historico de status e pagamentos
+      description: Retorna 404 quando o pedido nao pertence ao escopo do usuario (nao revela pedidos de terceiros).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '404': { $ref: '#/components/responses/404' }
+  /pedidos/{id}/status:
+    patch:
+      operationId: patchPedidosIdStatus
+      tags: [Pedidos]
+      summary: Atualiza status operacional (cozinha -> pronto -> entregue)
+      description: |
+        Transicoes: PAGO -> EM_PREPARO (COZINHA/GERENTE/ADMIN); EM_PREPARO -> PRONTO (COZINHA/GERENTE/ADMIN);
+        PRONTO -> ENTREGUE (ATENDENTE/GERENTE/ADMIN). PAGO/PAGAMENTO_RECUSADO sao definidos pelo pagamento e CANCELADO pela rota de cancelamento.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AtualizarStatus' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '409':
+          description: Transicao invalida
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: TRANSICAO_STATUS_INVALIDA, message: Nao e permitido alterar o pedido de PAGAMENTO_RECUSADO para PRONTO., details: [{ field: status, issue: 'Transicoes permitidas a partir de PAGAMENTO_RECUSADO: nenhuma' }], timestamp: '2026-11-09T12:00:00Z', path: /pedidos/2/status } } }
+        '422': { $ref: '#/components/responses/422' }
+  /pedidos/{id}/cancelamento:
+    post:
+      operationId: postPedidosIdCancelamento
+      tags: [Pedidos]
+      summary: Cancela pedido (devolve estoque, estorna pontos e pagamento) - auditado
+      description: CLIENTE/ATENDENTE cancelam antes do pagamento aprovado; GERENTE/ADMIN tambem apos pago (gera estorno no gateway).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [motivo], properties: { motivo: { type: string, example: Cliente desistiu } } }
+      responses:
+        '200': { description: Cancelado, content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '409': { $ref: '#/components/responses/409' }
+        '422': { $ref: '#/components/responses/422' }
+  /pedidos/{id}/pagamentos:
+    get:
+      operationId: getPedidosIdPagamentos
+      tags: [Pedidos]
+      summary: Lista as tentativas de pagamento do pedido
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Pagamento' } } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '404': { $ref: '#/components/responses/404' }
+
+  /pagamentos:
+    post:
+      operationId: postPagamentos
+      tags: [Pagamentos]
+      summary: Solicita pagamento ao gateway externo (mock) e atualiza o status do pedido
+      description: |
+        A API **nao processa** o pagamento: envia a solicitacao ao gateway, registra o retorno (payload completo) e atualiza o pedido.
+        - Aprovado -> pagamento APROVADO, pedido **PAGO**, pontos creditados (se houver consentimento).
+        - Recusado -> pagamento RECUSADO, pedido **PAGAMENTO_RECUSADO** (permite nova tentativa ou cancelamento). Retorna 201 porque a tentativa foi registrada; o resultado esta em `pagamento.status`.
+        - Gateway fora do ar -> ate 3 chamadas com backoff exponencial; persistindo, registra ERRO e retorna **503** (pedido segue AGUARDANDO_PAGAMENTO).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SolicitarPagamento' } } }
+      responses:
+        '201':
+          description: Tentativa registrada (aprovada ou recusada)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoPagamento' }
+              examples:
+                aprovado:
+                  value:
+                    pagamento: { id: 1, pedidoId: 1, status: APROVADO, metodo: PIX, valor: 59.7, tentativa: 1, transacaoExternaId: mock_txn_8744667b, codigoRetorno: APROVADO, mensagem: Pagamento aprovado., respostaGateway: { status: approved, authorization_code: '860055', pix_e2e_id: E1794234127393MOCK } }
+                    pedido: { pedidoId: 1, status: PAGO }
+                    pontosCreditados: 59
+                    chamadasGateway: 1
+                    reutilizado: false
+                recusado:
+                  value:
+                    pagamento: { id: 2, pedidoId: 2, status: RECUSADO, metodo: PIX, valor: 59.7, tentativa: 1, transacaoExternaId: mock_txn_1a2b, codigoRetorno: SALDO_INSUFICIENTE, mensagem: 'Pagamento recusado pelo emissor: saldo ou limite insuficiente.', respostaGateway: { status: declined, decline_code: insufficient_funds } }
+                    pedido: { pedidoId: 2, status: PAGAMENTO_RECUSADO }
+                    pontosCreditados: 0
+                    chamadasGateway: 1
+                    reutilizado: false
+        '200': { description: Reenvio idempotente - devolve a tentativa original }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+        '404': { $ref: '#/components/responses/404' }
+        '409':
+          description: Pedido ja pago ou cancelado
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: PEDIDO_JA_PAGO, message: Pedido em status ENTREGUE ja possui pagamento aprovado., details: [], timestamp: '2026-11-09T12:00:00Z', path: /pagamentos } } }
+        '422': { $ref: '#/components/responses/422' }
+        '503':
+          description: Gateway indisponivel apos as tentativas
+          content: { application/json: { schema: { $ref: '#/components/schemas/Erro' }, example: { error: GATEWAY_PAGAMENTO_INDISPONIVEL, message: 'Gateway de pagamento indisponivel apos 3 tentativas. O pedido segue aguardando pagamento; tente novamente.', details: [], timestamp: '2026-11-09T12:00:00Z', path: /pagamentos } } }
+  /pagamentos/{id}:
+    get:
+      operationId: getPagamentosId
+      tags: [Pagamentos]
+      summary: Consulta uma tentativa de pagamento
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pagamento' } } } }
+        '401': { $ref: '#/components/responses/401' }
+        '404': { $ref: '#/components/responses/404' }
+
+  /fidelidade/saldo:
+    get:
+      operationId: getFidelidadeSaldo
+      tags: [Fidelidade]
+      summary: Saldo de pontos e regras do programa - CLIENTE
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { usuarioId: 6, consentimentoAtivo: true, saldoPontos: 259, equivalenteEmReais: 25.9, regras: { acumulo: '1 ponto por R$ 1,00 pago', resgate: '1 ponto = R$ 0.10; desconto maximo de 50% do pedido' } }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+  /fidelidade/extrato:
+    get:
+      operationId: getFidelidadeExtrato
+      tags: [Fidelidade]
+      summary: Extrato (acumulos, resgates e estornos) - CLIENTE
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+
+  /auditoria:
+    get:
+      operationId: getAuditoria
+      tags: [Matriz]
+      summary: Consulta a trilha de auditoria de acoes sensiveis - ADMIN
+      description: 'Acoes registradas: LOGIN_SUCESSO, LOGIN_FALHA, USUARIO_CRIADO, ACESSO_DADOS_PESSOAIS, EXPORTACAO_DADOS, ANONIMIZACAO_TITULAR, CONSENTIMENTO_CONCEDIDO/REVOGADO, PEDIDO_CRIADO, PEDIDO_STATUS_ALTERADO, PEDIDO_CANCELADO, PAGAMENTO_APROVADO/RECUSADO/FALHA_GATEWAY, ESTOQUE_MOVIMENTADO, PRODUTO_CRIADO/ATUALIZADO/DESATIVADO, PROMOCAO_CRIADA, UNIDADE_CRIADA.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: acao, in: query, schema: { type: string, example: PEDIDO_CANCELADO } }
+        - { name: entidade, in: query, schema: { type: string, example: Pedido } }
+        - { name: entidadeId, in: query, schema: { type: string, example: '1' } }
+        - { name: usuarioId, in: query, schema: { type: integer } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example:
+                data: [{ id: 31, usuarioId: 6, perfil: CLIENTE, acao: PEDIDO_CANCELADO, entidade: Pedido, entidadeId: '5', detalhes: { statusAnterior: AGUARDANDO_PAGAMENTO, motivo: Desisti da compra, estorno: false }, ip: '::1', requestId: 9b0e..., createdAt: '2026-11-09T12:00:00Z' }]
+                meta: { page: 1, limit: 10, total: 1, totalPages: 1 }
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
+  /relatorios/vendas:
+    get:
+      operationId: getRelatoriosVendas
+      tags: [Matriz]
+      summary: Vendas consolidadas por canal, unidade e produto - GERENTE (propria unidade) ou ADMIN (rede)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: unidadeId, in: query, schema: { type: integer } }
+        - { name: dataInicio, in: query, schema: { type: string, format: date-time } }
+        - { name: dataFim, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example:
+                filtros: { unidadeId: null, dataInicio: null, dataFim: null }
+                totalPedidos: 2
+                faturamento: 119.4
+                porCanal: [{ canalPedido: APP, pedidos: 1, faturamento: 59.7 }, { canalPedido: BALCAO, pedidos: 1, faturamento: 59.7 }]
+                porUnidade: [{ unidadeId: 1, nome: Raizes do Nordeste - Recife Boa Viagem, uf: PE, pedidos: 2, faturamento: 119.4 }]
+                produtosMaisVendidos: [{ produtoId: 1, nome: Tapioca de Carne de Sol com Queijo Coalho, quantidade: 4, faturamento: 99.6 }]
+        '401': { $ref: '#/components/responses/401' }
+        '403': { $ref: '#/components/responses/403' }
