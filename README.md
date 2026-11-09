@@ -11,7 +11,7 @@ consentimento (LGPD), promoções, auditoria e relatórios para a matriz.
 
 | Evidência | Onde |
 |---|---|
-| Repositório | `https://github.com/<SEU-USUARIO>/raizes-do-nordeste-api` |
+| Repositório | `https://github.com/Apollo-Hb/raizes-do-nordeste-api` |
 | Swagger UI (local) | <http://localhost:3000/docs> (rota `/docs`) — JSON em `/openapi.json` |
 | Contrato OpenAPI no repositório | [`src/api/docs/openapi.yaml`](src/api/docs/openapi.yaml) |
 | Coleção Postman | [`postman/raizes-do-nordeste.postman_collection.json`](postman/raizes-do-nordeste.postman_collection.json) + [`postman/local.postman_environment.json`](postman/local.postman_environment.json) |
