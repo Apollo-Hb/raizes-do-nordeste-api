@@ -6,10 +6,11 @@ const { AppError } = require('../../domain/errors');
 
 module.exports = ({ services, env }) => {
   const r = Router();
-  // Protecao contra forca bruta no login.
+  // Protecao contra forca bruta: conta apenas tentativas FALHAS por IP na janela de 15 min.
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: env.loginRateLimit,
+    skipSuccessfulRequests: true,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     handler: (req, res, next) =>

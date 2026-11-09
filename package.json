@@ -12,7 +12,8 @@
     "db:reset": "prisma migrate reset --force",
     "setup": "prisma migrate deploy && prisma db seed",
     "test": "node scripts/test.js",
-    "test:postman": "newman run postman/raizes-do-nordeste.postman_collection.json -e postman/local.postman_environment.json"
+    "test:postman": "npx -y newman run postman/raizes-do-nordeste.postman_collection.json -e postman/local.postman_environment.json",
+    "postman:gerar": "node scripts/gerar-postman.js"
   },
   "keywords": [],
   "author": "Apollo Hoinatz Bardini (RU 5586086)",
