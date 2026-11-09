@@ -4,6 +4,7 @@
   "description": "API Back-end da rede de lanchonetes Raizes do Nordeste (pedidos multicanal, estoque por unidade, pagamento mock, fidelidade e LGPD)",
   "main": "src/server.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:migrate": "prisma migrate deploy",

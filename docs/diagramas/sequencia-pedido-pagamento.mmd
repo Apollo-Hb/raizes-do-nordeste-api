@@ -1,0 +1,47 @@
+sequenceDiagram
+  autonumber
+  actor C as Cliente (App/Totem/Web)
+  participant API as API (Controller + JWT/RBAC + Zod)
+  participant PS as PedidoService
+  participant PG as PagamentoService
+  participant DB as Banco (Prisma/SQLite)
+  participant GW as Gateway externo (mock)
+  actor K as Cozinha
+
+  C->>API: POST /pedidos {canalPedido, unidadeId, itens, formaPagamento} + Idempotency-Key
+  API->>API: valida token, perfil e contrato (422 se invalido)
+  API->>PS: criar(input, ctx)
+  PS->>DB: busca unidade, produtos e estoque da unidade
+  alt produto ou unidade inexistente
+    PS-->>C: 404 PRODUTO/UNIDADE_NAO_ENCONTRADO
+  else estoque insuficiente
+    PS-->>C: 409 ESTOQUE_INSUFICIENTE
+  else itens validos
+    PS->>DB: BEGIN · UPDATE estoque SET qtd = qtd - x WHERE qtd >= x
+    PS->>DB: INSERT pedido AGUARDANDO_PAGAMENTO, itens, historico, audit_log · COMMIT
+    API-->>C: 201 Created {pedidoId, status, total}
+  end
+
+  C->>API: POST /pagamentos {pedidoId, tokenPagamento}
+  API->>PG: solicitar(pedidoId)
+  PG->>DB: valida status do pedido (409 se ja pago ou cancelado)
+  loop ate 3 tentativas com backoff exponencial
+    PG->>GW: solicitarPagamento(referencia, valor, metodo)
+  end
+  alt aprovado
+    GW-->>PG: APROVADO + transacaoId + payload
+    PG->>DB: pagamento APROVADO · pedido PAGO · pontos (se consentimento) · audit
+    API-->>C: 201 {pagamento.status: APROVADO, pedido.status: PAGO}
+  else recusado
+    GW-->>PG: RECUSADO + codigo + mensagem
+    PG->>DB: pagamento RECUSADO · pedido PAGAMENTO_RECUSADO · audit
+    API-->>C: 201 {pagamento.status: RECUSADO, mensagem}
+  else timeout / indisponivel
+    PG->>DB: pagamento ERRO · pedido segue AGUARDANDO_PAGAMENTO
+    API-->>C: 503 GATEWAY_PAGAMENTO_INDISPONIVEL
+  end
+
+  K->>API: PATCH /pedidos/{id}/status {EM_PREPARO, depois PRONTO}
+  API->>PS: atualizarStatus (maquina de estados + perfil)
+  PS->>DB: UPDATE pedido WHERE status = atual · historico · audit
+  API-->>K: 200 {status}

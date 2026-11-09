@@ -1,0 +1,145 @@
+erDiagram
+  UNIDADES ||--o{ USUARIOS : "emprega"
+  UNIDADES ||--o{ ESTOQUES : "possui estoque proprio"
+  PRODUTOS ||--o{ ESTOQUES : "compoe cardapio"
+  UNIDADES ||--o{ PEDIDOS : "recebe"
+  USUARIOS |o--o{ PEDIDOS : "cliente / atendente"
+  PEDIDOS ||--|{ ITENS_PEDIDO : "contem"
+  PRODUTOS ||--o{ ITENS_PEDIDO : "vendido em"
+  PEDIDOS ||--o{ PAGAMENTOS : "tentativas (desacoplado)"
+  PEDIDOS ||--|{ HISTORICO_STATUS_PEDIDO : "registra"
+  PROMOCOES |o--o{ PEDIDOS : "aplicada em"
+  UNIDADES |o--o{ PROMOCOES : "restringe"
+  USUARIOS ||--o{ CONSENTIMENTOS : "concede"
+  USUARIOS ||--o{ TRANSACOES_FIDELIDADE : "acumula"
+  PEDIDOS |o--o{ TRANSACOES_FIDELIDADE : "origina"
+  UNIDADES ||--o{ MOVIMENTACOES_ESTOQUE : "movimenta"
+  PRODUTOS ||--o{ MOVIMENTACOES_ESTOQUE : "movimentado"
+  PEDIDOS |o--o{ MOVIMENTACOES_ESTOQUE : "reserva / estorna"
+  USUARIOS |o--o{ AUDIT_LOGS : "executa"
+
+  UNIDADES {
+    int id PK
+    string nome
+    string cidade
+    string uf
+    enum tipoCozinha "COMPLETA, REDUZIDA"
+    bool ativa
+  }
+  USUARIOS {
+    int id PK
+    string nome
+    string email UK
+    string senhaHash "bcrypt"
+    enum perfil "CLIENTE ... ADMIN"
+    int unidadeId FK "so funcionarios"
+    bool ativo
+    datetime anonimizadoEm
+  }
+  CONSENTIMENTOS {
+    int id PK
+    int usuarioId FK
+    enum finalidade "FIDELIDADE, MARKETING"
+    bool concedido
+    string versaoTermo
+    datetime createdAt "historico imutavel"
+  }
+  PRODUTOS {
+    int id PK
+    string nome
+    string categoria
+    decimal preco
+    bool exigeCozinhaCompleta
+    bool sazonal
+    datetime disponivelDe
+    datetime disponivelAte
+    bool ativo "exclusao logica"
+  }
+  ESTOQUES {
+    int id PK
+    int unidadeId FK "UK unidadeId+produtoId"
+    int produtoId FK
+    int quantidade ">= 0"
+    decimal precoLocal "preco regional"
+  }
+  MOVIMENTACOES_ESTOQUE {
+    int id PK
+    int unidadeId FK
+    int produtoId FK
+    enum tipo "ENTRADA, SAIDA, RESERVA, ESTORNO"
+    int quantidade
+    int saldoApos
+    int pedidoId FK
+    int usuarioId FK
+  }
+  PROMOCOES {
+    int id PK
+    string codigo UK
+    int percentualDesconto
+    int unidadeId FK "nulo = rede"
+    enum canalPedido "nulo = todos"
+    datetime inicio
+    datetime fim
+  }
+  PEDIDOS {
+    int id PK
+    int clienteId FK
+    int atendenteId FK
+    int unidadeId FK
+    enum canalPedido "NOT NULL"
+    enum status
+    enum formaPagamento
+    decimal subtotal
+    decimal descontoPromocao
+    decimal descontoPontos
+    decimal total
+    int promocaoId FK
+    string idempotencyKey UK
+  }
+  ITENS_PEDIDO {
+    int id PK
+    int pedidoId FK
+    int produtoId FK
+    int quantidade
+    decimal precoUnitario "preco congelado"
+    decimal subtotal
+  }
+  HISTORICO_STATUS_PEDIDO {
+    int id PK
+    int pedidoId FK
+    enum statusDe
+    enum statusPara
+    int usuarioId
+    datetime createdAt
+  }
+  PAGAMENTOS {
+    int id PK
+    int pedidoId FK
+    enum status "APROVADO, RECUSADO, ERRO, ESTORNADO"
+    enum metodo
+    decimal valor
+    int tentativa
+    string transacaoExternaId
+    string codigoRetorno
+    text payloadResposta
+    string idempotencyKey UK
+  }
+  TRANSACOES_FIDELIDADE {
+    int id PK
+    int usuarioId FK
+    int pedidoId FK
+    enum tipo "ACUMULO, RESGATE, ESTORNO"
+    int pontos "saldo = soma"
+  }
+  AUDIT_LOGS {
+    int id PK
+    int usuarioId FK
+    string perfil
+    string acao
+    string entidade
+    string entidadeId
+    text detalhes "sem dados sensiveis"
+    string ip
+    string requestId
+    datetime createdAt
+  }

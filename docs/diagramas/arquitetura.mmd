@@ -1,0 +1,46 @@
+flowchart TB
+  subgraph CANAIS["Canais (clientes da API)"]
+    direction LR
+    APP["App"]
+    TOT["Totem"]
+    WEB["Web"]
+    BAL["Balcão (PDV)"]
+    PCK["Pick-up"]
+  end
+  subgraph API["API — src/api (Interface / Controllers)"]
+    direction LR
+    R["Rotas REST<br/>/auth /pedidos /pagamentos ..."]
+    MW["Middlewares<br/>requestId, JWT, RBAC, Zod,<br/>erro padrão, rate limit"]
+    SW["Swagger UI /docs<br/>(OpenAPI 3)"]
+  end
+  subgraph APL["Application — src/application (Casos de uso)"]
+    direction LR
+    S1["PedidoService"]
+    S2["PagamentoService"]
+    S3["EstoqueService"]
+    S4["UsuarioService (LGPD)"]
+    S5["Catálogo / Fidelidade / Gestão"]
+  end
+  subgraph DOM["Domain — src/domain (Regras de negócio puras)"]
+    direction LR
+    D1["Máquina de estados<br/>do pedido"]
+    D2["Cálculo de totais<br/>(centavos)"]
+    D3["Regras de promoção<br/>e fidelidade"]
+    D4["Erros de domínio"]
+  end
+  subgraph INF["Infrastructure — src/infrastructure"]
+    direction LR
+    I1["Prisma ORM<br/>+ migrations"]
+    I2["MockPaymentGateway"]
+    I3["AuditLogger"]
+    I4["bcrypt / JWT"]
+  end
+  DB[("SQLite (dev)<br/>PostgreSQL (produção)")]
+  PSP["Gateway de pagamento<br/>externo (PSP)"]
+
+  CANAIS -- "HTTPS + JSON + Bearer JWT + canalPedido" --> API
+  API --> APL
+  APL --> DOM
+  APL -- "portas (injeção de dependência em src/container.js)" --> INF
+  I1 --> DB
+  I2 -. "produção: adaptador real" .-> PSP

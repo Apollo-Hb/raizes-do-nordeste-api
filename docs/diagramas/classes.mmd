@@ -1,0 +1,127 @@
+classDiagram
+  direction LR
+  class Unidade {
+    +int id
+    +String nome
+    +String uf
+    +TipoCozinha tipoCozinha
+    +bool ativa
+  }
+  class Usuario {
+    +int id
+    +String nome
+    +String email
+    -String senhaHash
+    +Perfil perfil
+    +int unidadeId
+    +anonimizar()
+  }
+  class Consentimento {
+    +Finalidade finalidade
+    +bool concedido
+    +String versaoTermo
+  }
+  class Produto {
+    +int id
+    +String nome
+    +Decimal preco
+    +bool exigeCozinhaCompleta
+    +bool sazonal
+  }
+  class Estoque {
+    +int quantidade
+    +Decimal precoLocal
+    +reservar(qtd)
+    +devolver(qtd)
+  }
+  class Pedido {
+    +int id
+    +CanalPedido canalPedido
+    +StatusPedido status
+    +Decimal subtotal
+    +Decimal total
+    +String idempotencyKey
+    +calcularTotais()
+    +validarTransicao(novo, perfil)
+    +validarCancelamento(usuario)
+  }
+  class ItemPedido {
+    +int quantidade
+    +Decimal precoUnitario
+    +Decimal subtotal
+  }
+  class Pagamento {
+    +StatusPagamento status
+    +MetodoPagamento metodo
+    +Decimal valor
+    +int tentativa
+    +String transacaoExternaId
+  }
+  class Promocao {
+    +String codigo
+    +int percentualDesconto
+    +validarPara(unidade, canal) int
+  }
+  class TransacaoFidelidade {
+    +TipoTransacao tipo
+    +int pontos
+  }
+  class PaymentGateway {
+    <<interface>>
+    +solicitarPagamento(req) RespostaGateway
+    +estornar(transacaoId)
+  }
+  class MockPaymentGateway {
+    +solicitarPagamento(req)
+    +estornar(transacaoId)
+  }
+  class PedidoService {
+    +criar(input, ctx, idempotencyKey)
+    +atualizarStatus(id, status, ctx)
+    +cancelar(id, motivo, ctx)
+  }
+  class PagamentoService {
+    -int maxTentativas
+    +solicitar(input, ctx, idempotencyKey)
+    -chamarGatewayComRetry(req)
+  }
+  class AuditLogger {
+    +registrar(ator, acao, entidade, detalhes)
+  }
+  class CanalPedido {
+    <<enumeration>>
+    APP
+    TOTEM
+    BALCAO
+    PICKUP
+    WEB
+  }
+  class StatusPedido {
+    <<enumeration>>
+    AGUARDANDO_PAGAMENTO
+    PAGAMENTO_RECUSADO
+    PAGO
+    EM_PREPARO
+    PRONTO
+    ENTREGUE
+    CANCELADO
+  }
+
+  Unidade "1" o-- "0..*" Usuario : funcionarios
+  Unidade "1" *-- "0..*" Estoque
+  Produto "1" -- "0..*" Estoque
+  Usuario "1" *-- "0..*" Consentimento
+  Usuario "0..1" -- "0..*" Pedido : cliente
+  Unidade "1" -- "0..*" Pedido
+  Pedido "1" *-- "1..*" ItemPedido
+  ItemPedido "0..*" --> "1" Produto
+  Pedido "1" -- "0..*" Pagamento
+  Pedido "0..*" --> "0..1" Promocao
+  Usuario "1" -- "0..*" TransacaoFidelidade
+  Pedido ..> CanalPedido
+  Pedido ..> StatusPedido
+  PaymentGateway <|.. MockPaymentGateway
+  PagamentoService --> PaymentGateway
+  PagamentoService --> PedidoService
+  PedidoService --> AuditLogger
+  PagamentoService --> AuditLogger

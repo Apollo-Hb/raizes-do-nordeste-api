@@ -1,0 +1,52 @@
+flowchart LR
+  classDef ator fill:#ffffff,stroke:#333,stroke-width:1.5px,color:#111
+  classDef uc fill:#fdf3e1,stroke:#b5651d,stroke-width:1.2px,color:#222
+  classDef ext fill:#eef3fb,stroke:#3b5b92,stroke-width:1.5px,color:#111
+
+  CLI["«ator»<br/><b>Cliente</b><br/>(App / Web / Totem / Pick-up)"]:::ator
+  ATE["«ator»<br/><b>Atendente</b><br/>(Balcão)"]:::ator
+  COZ["«ator»<br/><b>Cozinha</b>"]:::ator
+  GER["«ator»<br/><b>Gerente da unidade</b>"]:::ator
+  ADM["«ator»<br/><b>Administrador</b><br/>(Matriz)"]:::ator
+  GW["«sistema externo»<br/><b>Gateway de Pagamento</b>"]:::ext
+
+  subgraph SIS["Sistema Raízes do Nordeste — API Back-end"]
+    direction TB
+    UC01(["UC01 Cadastrar-se e autenticar"]):::uc
+    UC02(["UC02 Consultar cardápio da unidade"]):::uc
+    UC03(["UC03 Realizar pedido (canalPedido)"]):::uc
+    UC14(["UC14 Validar e reservar estoque"]):::uc
+    UC13(["UC13 Aplicar promoção"]):::uc
+    UC08(["UC08 Consultar e resgatar pontos"]):::uc
+    UC04(["UC04 Solicitar pagamento"]):::uc
+    UC05(["UC05 Acompanhar status do pedido"]):::uc
+    UC06(["UC06 Cancelar pedido"]):::uc
+    UC07(["UC07 Gerir consentimento e dados pessoais (LGPD)"]):::uc
+    UC09(["UC09 Atualizar status de preparo/entrega"]):::uc
+    UC10(["UC10 Movimentar e consultar estoque"]):::uc
+    UC11(["UC11 Gerir produtos, unidades e promoções"]):::uc
+    UC12(["UC12 Consultar relatórios e auditoria"]):::uc
+  end
+
+  CLI --- UC01
+  CLI --- UC02
+  CLI --- UC03
+  CLI --- UC05
+  CLI --- UC06
+  CLI --- UC07
+  CLI --- UC08
+  ATE --- UC03
+  ATE --- UC04
+  ATE --- UC09
+  COZ --- UC09
+  UC09 --- GER
+  UC10 --- GER
+  UC12 --- GER
+  UC10 --- ADM
+  UC11 --- ADM
+  UC12 --- ADM
+  UC03 -. "«include»" .-> UC14
+  UC03 -. "«include»" .-> UC04
+  UC13 -. "«extend»" .-> UC03
+  UC08 -. "«extend»" .-> UC03
+  UC04 --- GW

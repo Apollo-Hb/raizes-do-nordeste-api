@@ -1,0 +1,51 @@
+erDiagram
+  direction LR
+  UNIDADES ||--o{ USUARIOS : "emprega"
+  USUARIOS |o--o{ PEDIDOS : "cliente / atendente"
+  USUARIOS ||--o{ CONSENTIMENTOS : "concede"
+  USUARIOS ||--o{ TRANSACOES_FIDELIDADE : "acumula"
+  PEDIDOS |o--o{ TRANSACOES_FIDELIDADE : "origina"
+  USUARIOS |o--o{ AUDIT_LOGS : "executa"
+  USUARIOS {
+    int id PK
+    string nome
+    string email UK
+    string senhaHash "bcrypt"
+    enum perfil "CLIENTE ... ADMIN"
+    int unidadeId FK "so funcionarios"
+    bool ativo
+    datetime anonimizadoEm
+  }
+  TRANSACOES_FIDELIDADE {
+    int id PK
+    int usuarioId FK
+    int pedidoId FK
+    enum tipo "ACUMULO, RESGATE, ESTORNO"
+    int pontos "saldo = soma"
+  }
+  CONSENTIMENTOS {
+    int id PK
+    int usuarioId FK
+    enum finalidade "FIDELIDADE, MARKETING"
+    bool concedido
+    string versaoTermo
+    datetime createdAt "historico imutavel"
+  }
+  AUDIT_LOGS {
+    int id PK
+    int usuarioId FK
+    string perfil
+    string acao
+    string entidade
+    string entidadeId
+    text detalhes "sem dados sensiveis"
+    string ip
+    string requestId
+    datetime createdAt
+  }
+  PEDIDOS {
+    int id PK "ver outra vista"
+  }
+  UNIDADES {
+    int id PK "ver outra vista"
+  }
